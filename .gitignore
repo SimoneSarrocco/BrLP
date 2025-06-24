@@ -162,3 +162,17 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+training_outputs/ae_output/autoencoder-ep-199.pth
+.gitignore
+training_outputs/ae_output/discriminator-ep-199.pth
+training_outputs/ae_output/autoencoder-ep-299.pth
+.gitignore
+examples/dataset.csv
+examples/B.csv
+training_outputs/ae_output/discriminator-ep-299.pth
+src/configs/config.yaml
+src/configs/lakefs_cfg.yaml
+src/configs/dataset/__init__.py
+src/configs/dataset/datalist.py
+src/configs/dataset/lakefsloader.py
+src/configs/dataset/loadlakefsimaged.py

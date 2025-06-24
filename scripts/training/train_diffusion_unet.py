@@ -14,10 +14,10 @@ from generative.networks.schedulers import DDPMScheduler
 from generative.inferers import DiffusionInferer
 from tqdm import tqdm
 
-from brlp import const
-from brlp import utils
-from brlp import networks
-from brlp import (
+from src.brlp import const
+from src.brlp import utils
+from src.brlp import networks
+from src.brlp import (
     get_dataset_from_pd,
     sample_using_diffusion
 )
@@ -48,46 +48,47 @@ def images_to_tensorboard(
     Visualize the generation on tensorboard
     """
 
-    for tag_i, size in enumerate([ 'small', 'medium', 'large' ]):
+    context = torch.tensor([[
+        (torch.randint(0, 100, (1,)) - const.AGE_MIN) / const.AGE_DELTA,  # age 
+        (torch.randint(1, 2,   (1,)) - const.SEX_MIN) / const.SEX_DELTA,  # sex
+        (torch.rand(1) * 20),  # lesion size
+        (torch.randint(0, 20, (1,))),  # lesion count
+        # (torch.randint(0, 2,   (1,)) - const.D
+        # (torch.randint(1, 3,   (1,)) - const.DIA_MIN) / const.DIA_DELTA,  # diagnosis
+        # 0.567, # (mean) cerebral cortex 
+        # 0.539, # (mean) hippocampus
+        # 0.578, # (mean) amygdala
+        # 0.558, # (mean) cerebral white matter
+        # 0.30 * (tag_i+1), # variable size lateral ventricles
+    ]])
 
-        context = torch.tensor([[
-            (torch.randint(60, 99, (1,)) - const.AGE_MIN) / const.AGE_DELTA,  # age 
-            (torch.randint(1, 2,   (1,)) - const.SEX_MIN) / const.SEX_DELTA,  # sex
-            (torch.randint(1, 3,   (1,)) - const.DIA_MIN) / const.DIA_DELTA,  # diagnosis
-            0.567, # (mean) cerebral cortex 
-            0.539, # (mean) hippocampus
-            0.578, # (mean) amygdala
-            0.558, # (mean) cerebral white matter
-            0.30 * (tag_i+1), # variable size lateral ventricles
-        ]])
+    image = sample_using_diffusion(
+        autoencoder=autoencoder, 
+        diffusion=diffusion, 
+        context=context,
+        device=DEVICE, 
+        scale_factor=scale_factor
+    )
 
-        image = sample_using_diffusion(
-            autoencoder=autoencoder, 
-            diffusion=diffusion, 
-            context=context,
-            device=DEVICE, 
-            scale_factor=scale_factor
-        )
-
-        utils.tb_display_generation(
-            writer=writer, 
-            step=epoch, 
-            tag=f'{mode}/{size}_ventricles',
-            image=image
-        )
-
+    utils.tb_display_generation(
+        writer=writer, 
+        step=epoch, 
+        tag=f'{mode}/generated_image',
+        image=image
+    )
+    
 
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv',  required=True, type=str)
-    parser.add_argument('--cache_dir',  required=True, type=str)
+    parser.add_argument('--cache_dir',  default=None, type=str)
     parser.add_argument('--output_dir', required=True, type=str)
     parser.add_argument('--aekl_ckpt',  required=True, type=str)
     parser.add_argument('--diff_ckpt',   default=None, type=str)
     parser.add_argument('--num_workers', default=8,     type=int)
     parser.add_argument('--n_epochs',    default=5,     type=int)
-    parser.add_argument('--batch_size',  default=16,    type=int)
+    parser.add_argument('--batch_size',  default=1,    type=int)
     parser.add_argument('--lr',          default=2.5e-5,  type=float)
     args = parser.parse_args()
     
@@ -206,6 +207,8 @@ if __name__ == '__main__':
                 scale_factor=scale_factor
             )
 
-        # save the model                
-        savepath = os.path.join(args.output_dir, f'unet-ep-{epoch}.pth')
-        torch.save(diffusion.state_dict(), savepath)
+        # save the mode
+        if epoch % 50 == 0 or epoch == args.n_epochs - 1:
+            print(f"Saving model at epoch {epoch}...")               
+            savepath = os.path.join(args.output_dir, f'unet-ep-{epoch}.pth')
+            torch.save(diffusion.state_dict(), savepath)

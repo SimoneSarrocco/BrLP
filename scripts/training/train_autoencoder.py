@@ -14,9 +14,9 @@ from torch.cuda.amp import autocast, GradScaler
 from generative.losses import PerceptualLoss, PatchAdversarialLoss
 from torch.utils.tensorboard import SummaryWriter
 
-from brlp import const
-from brlp import utils
-from brlp import (
+from src.brlp import const
+from src.brlp import utils
+from src.brlp import (
     KLDivergenceLoss, GradientAccumulation,
     init_autoencoder, init_patch_discriminator,
     get_dataset_from_pd  
@@ -27,11 +27,17 @@ set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
+class DebugLoadImaged(transforms.LoadImaged):
+    def __call__(self, data):
+        print("Trying to load:", data['image_path'])
+        return super().__call__(data)
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv',    required=True, type=str)
-    parser.add_argument('--cache_dir',      required=True, type=str)
+    parser.add_argument('--cache_dir',      default=None, type=str)
     parser.add_argument('--output_dir',     required=True, type=str)
     parser.add_argument('--aekl_ckpt',      default=None,  type=str)
     parser.add_argument('--disc_ckpt',      default=None,  type=str)
@@ -45,16 +51,36 @@ if __name__ == '__main__':
 
 
     transforms_fn = transforms.Compose([
+        # DebugLoadImaged(keys=['image_path']),
         transforms.CopyItemsD(keys={'image_path'}, names=['image']),
         transforms.LoadImageD(image_only=True, keys=['image']),
         transforms.EnsureChannelFirstD(keys=['image']), 
-        transforms.SpacingD(pixdim=const.RESOLUTION, keys=['image']),
-        transforms.ResizeWithPadOrCropD(spatial_size=const.INPUT_SHAPE_AE, mode='minimum', keys=['image']),
-        transforms.ScaleIntensityD(minv=0, maxv=1, keys=['image'])
+        # transforms.SpacingD(pixdim=const.RESOLUTION, keys=['image']),
+        # transforms.ResizeWithPadOrCropD(spatial_size=(96, 512, 512), mode='minimum', keys=['image']),
+        transforms.ResizeD(spatial_size=const.INPUT_SHAPE_AE, mode='trilinear', keys=['image']),
+        transforms.ScaleIntensityD(minv=0, maxv=1, keys=['image']),
     ])
+
+    # transforms_fn = transforms.Compose([
+    # transforms.NormalizeIntensity(nonzero=True, channel_wise=True),
+    # transforms.RandFlip(spatial_axis=0, prob=0.5),
+    # transforms.RandFlip(spatial_axis=1, prob=0.5),
+    # transforms.RandFlip(spatial_axis=2, prob=0.5),
+    # transforms.RandAffine(
+    #    prob=0.5,
+    #    rotate_range=(0.1, 0.1, 0.1),  # radians
+    #    shear_range=(0.05, 0.05, 0.05),
+    #    translate_range=(10, 10, 5),
+    #    scale_range=(0.1, 0.1, 0.1),
+    #    mode='bilinear'
+    #),
+    # transforms.ResizeWithPadOrCrop(spatial_size=(128, 128, 128), mode='minimum'),
+    # transforms.ScaleIntensity(minv=0, maxv=1),
+# ])
 
     dataset_df = pd.read_csv(args.dataset_csv)
     train_df = dataset_df[ dataset_df.split == 'train' ]
+    # train_df = train_df[~train_df['image_path'].str.contains("OMEGA04/L/V02")]
     trainset = get_dataset_from_pd(train_df, transforms_fn, args.cache_dir)
 
     train_loader = DataLoader(dataset=trainset, 
@@ -114,6 +140,7 @@ if __name__ == '__main__':
             with autocast(enabled=True):
 
                 images = batch["image"].to(DEVICE)
+                # images = batch.to(DEVICE)
                 reconstruction, z_mu, z_sigma = autoencoder(images)
 
                 # we use [-1] here because the discriminator also returns 
@@ -157,13 +184,14 @@ if __name__ == '__main__':
             avgloss.put('Discriminator/adverarial_loss',    loss_d.item())
 
             
-            if total_counter % 10 == 0:
-                step = total_counter // 10
+            if total_counter % 108 == 0:
+                step = total_counter // 108
                 avgloss.to_tensorboard(writer, step)
                 utils.tb_display_reconstruction(writer, step, images[0].detach().cpu(), reconstruction[0].detach().cpu())
         
             total_counter += 1
 
-        # Save the model after each epoch.
-        torch.save(discriminator.state_dict(), os.path.join(args.output_dir, f'discriminator-ep-{epoch}.pth'))
-        torch.save(autoencoder.state_dict(),   os.path.join(args.output_dir, f'autoencoder-ep-{epoch}.pth'))
+        # Save the model each 10 epoch.
+        if (epoch+1) % 100 == 0 or epoch == args.n_epochs - 1:
+            torch.save(discriminator.state_dict(), os.path.join(args.output_dir, f'discriminator-ep-{epoch}.pth'))
+            torch.save(autoencoder.state_dict(),   os.path.join(args.output_dir, f'autoencoder-ep-{epoch}.pth'))

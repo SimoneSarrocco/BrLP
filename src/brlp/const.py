@@ -60,14 +60,11 @@ COARSE_REGIONS = [
 ]
 
 CONDITIONING_VARIABLES = [
-    "age", 
-    "sex",
-    "diagnosis",
-    "cerebral_cortex", 
-    "hippocampus", 
-    "amygdala",
-    "cerebral_white_matter",
-    "lateral_ventricle", 
+    "AgeatVisit", 
+    "Gender",
+    "GA_lesion_size",
+    # "SmokingPY", 
+    "GA_lesion_count",
 ]
 
 CONDITIONING_REGIONS = [
@@ -82,19 +79,19 @@ CONDITIONING_REGIONS = [
 RESOLUTION = 1.5                                
 
 # shape of the MNI152 (1mm^3) template
-INPUT_SHAPE_1mm = (182, 218, 182)   
+INPUT_SHAPE_1mm = (96, 128, 128)   
 
 # resampling the MNI152 to (1.5mm^3)
-INPUT_SHAPE_1p5mm = (122, 146, 122)   
+INPUT_SHAPE_1p5mm = (96, 128, 128)   
 
 # Adjusting the dimensions to be divisible by 8 (2^3 where 3 are the downsampling layers of the AE)
-INPUT_SHAPE_AE = (120, 144, 120)   
+INPUT_SHAPE_AE = (96, 128, 128)   
 
 # Latent shape of the autoencoder 
-LATENT_SHAPE_AE = (3, 15, 18, 15)   
+LATENT_SHAPE_AE = (3, 48, 32, 32)   
 
 # Adjusting the latent space (with constant padding) to be divisible by 4 (2^2 where 2 are the downsampling layers of U-Net)
-LATENT_SHAPE_DM = (3, 16, 20, 16)   
+LATENT_SHAPE_DM = (3, 48, 32, 32)
 
 # Affine matrix for MNI space resampled to 1.5mm^3
 MNI152_1P5MM_AFFINE = np.array([         

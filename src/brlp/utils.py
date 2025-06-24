@@ -60,7 +60,7 @@ class AverageLoss:
             writer.add_scalar(metric_key, self.pop_avg(metric_key), step)
             
             
-def to_vae_latent_trick(z: torch.Tensor, unpadded_z_shape: tuple = (3, 15, 18, 15)) -> torch.Tensor:
+def to_vae_latent_trick(z: torch.Tensor, unpadded_z_shape: tuple = (3, 48, 32, 32)) -> torch.Tensor:
     """
     The latent for the VAE is not divisible by 4 (required to
     go through the UNet), therefore we apply padding before using 
@@ -79,7 +79,7 @@ def to_vae_latent_trick(z: torch.Tensor, unpadded_z_shape: tuple = (3, 15, 18, 1
     return z
 
 
-def to_mni_space_1p5mm_trick(x: torch.Tensor, mni1p5_dim: tuple = (122, 146, 122)) -> torch.Tensor:
+def to_mni_space_1p5mm_trick(x: torch.Tensor, mni1p5_dim: tuple = (96, 128, 128)) -> torch.Tensor:
     """
     The volume is resized to be divisible by 8 (required by 
     the autoencoder). This function restores the initial dimensions
@@ -108,9 +108,9 @@ def tb_display_reconstruction(writer, step, image, recon):
     if len(recon.shape) == 4: recon = recon.squeeze(0)
 
     ax[0, 0].set_title('original image', color='cyan')
-    ax[0, 0].imshow(image[image.shape[0] // 2, :, :], cmap='gray')
-    ax[0, 1].imshow(image[:, image.shape[1] // 2, :], cmap='gray')
-    ax[0, 2].imshow(image[:, :, image.shape[2] // 2], cmap='gray')
+    ax[0, 0].imshow(image[image.shape[0] // 2, :, :], cmap='gray') # should be the image from the front (fixed depth)
+    ax[0, 1].imshow(image[:, image.shape[1] // 2, :], cmap='gray') # should be the image from the top (fixed height)
+    ax[0, 2].imshow(image[:, :, image.shape[2] // 2], cmap='gray') # should be the image from the side (fixed width)
 
     ax[1, 0].set_title('reconstructed image', color='magenta')
     ax[1, 0].imshow(recon[recon.shape[0] // 2, :, :], cmap='gray')
@@ -129,9 +129,9 @@ def tb_display_generation(writer, step, tag, image):
     _, ax = plt.subplots(ncols=3, figsize=(7, 3))
     for _ax in ax.flatten(): _ax.set_axis_off()
 
-    ax[0].imshow(image[image.shape[0] // 2, :, :], cmap='gray')
-    ax[1].imshow(image[:, image.shape[1] // 2, :], cmap='gray')
-    ax[2].imshow(image[:, :, image.shape[2] // 2], cmap='gray')
+    ax[0].imshow(image[image.shape[0] // 2, :, :], cmap='gray')  # should be the image from the front (fixed depth)
+    ax[1].imshow(image[:, image.shape[1] // 2, :], cmap='gray')  # should be the image from the top (fixed height)
+    ax[2].imshow(image[:, :, image.shape[2] // 2], cmap='gray')  # should be the image from the side (fixed width)
 
     plt.tight_layout()
     writer.add_figure(tag, plt.gcf(), global_step=step)

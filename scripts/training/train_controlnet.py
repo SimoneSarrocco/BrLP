@@ -15,10 +15,10 @@ from monai.data.image_reader import NumpyReader
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
 
-from brlp import const
-from brlp import utils
-from brlp import networks
-from brlp import (
+from src.brlp import const
+from src.brlp import utils
+from src.brlp import networks
+from src.brlp import (
     get_dataset_from_pd, 
     sample_using_controlnet_and_z
 )
