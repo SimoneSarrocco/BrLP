@@ -49,10 +49,10 @@ def images_to_tensorboard(
     """
 
     context = torch.tensor([[
-        (torch.randint(0, 100, (1,)) - const.AGE_MIN) / const.AGE_DELTA,  # age 
+        (torch.randint(60, 99, (1,)) - const.AGE_MIN) / const.AGE_DELTA,  # age 
         (torch.randint(1, 2,   (1,)) - const.SEX_MIN) / const.SEX_DELTA,  # sex
-        (torch.rand(1) * 20),  # lesion size
-        (torch.randint(0, 20, (1,))),  # lesion count
+        (torch.rand(1) * 15 - const.LESION_SIZE_MIN) / const.LESION_SIZE_DELTA,  # lesion size
+        (torch.randint(0, 20, (1,)) - const.LESION_COUNT_MIN) / const.LESION_COUNT_DELTA,  # lesion count
         # (torch.randint(0, 2,   (1,)) - const.D
         # (torch.randint(1, 3,   (1,)) - const.DIA_MIN) / const.DIA_DELTA,  # diagnosis
         # 0.567, # (mean) cerebral cortex 
@@ -97,7 +97,7 @@ if __name__ == '__main__':
         transforms.CopyItemsD(keys=['latent_path'], names=['latent']),
         transforms.LoadImageD(keys=['latent'], reader=npz_reader),
         transforms.EnsureChannelFirstD(keys=['latent'], channel_dim=0), 
-        transforms.DivisiblePadD(keys=['latent'], k=4, mode='constant'),
+        # transforms.DivisiblePadD(keys=['latent'], k=4, mode='constant'),
         transforms.Lambda(func=concat_covariates)
     ])
 
@@ -128,7 +128,8 @@ if __name__ == '__main__':
         num_train_timesteps=1000, 
         schedule='scaled_linear_beta', 
         beta_start=0.0015, 
-        beta_end=0.0205
+        beta_end=0.0205,
+        # prediction_type='v_prediction',
     )
 
     inferer = DiffusionInferer(scheduler=scheduler)
@@ -208,7 +209,7 @@ if __name__ == '__main__':
             )
 
         # save the mode
-        if epoch % 50 == 0 or epoch == args.n_epochs - 1:
+        if epoch % 250 == 0 or epoch == args.n_epochs - 1:
             print(f"Saving model at epoch {epoch}...")               
             savepath = os.path.join(args.output_dir, f'unet-ep-{epoch}.pth')
             torch.save(diffusion.state_dict(), savepath)

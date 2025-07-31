@@ -78,9 +78,11 @@ def sample_using_diffusion(
     
     # decode the latent
     z = z / scale_factor
-    z = utils.to_vae_latent_trick( z.squeeze(0).cpu() )
-    x = autoencoder.decode_stage_2_outputs( z.unsqueeze(0).to(device) )
-    x = utils.to_mni_space_1p5mm_trick( x.squeeze(0).cpu() ).squeeze(0)
+    # z = utils.to_vae_latent_trick( z.squeeze(0).cpu() )
+    # x = autoencoder.decode_stage_2_outputs( z.unsqueeze(0).to(device) )
+    x = autoencoder.decode_stage_2_outputs( z.to(device) )
+    # x = utils.to_mni_space_1p5mm_trick( x.squeeze(0).cpu() ).squeeze(0)
+    x = utils.to_mni_space_1p5mm_trick( x.squeeze(0).cpu() )
     return x
 
 

@@ -76,7 +76,7 @@ CONDITIONING_REGIONS = [
 ]
 
 # choosen resolution
-RESOLUTION = 1.5                                
+RESOLUTION = 0.005671                                
 
 # shape of the MNI152 (1mm^3) template
 INPUT_SHAPE_1mm = (96, 128, 128)   
@@ -85,13 +85,13 @@ INPUT_SHAPE_1mm = (96, 128, 128)
 INPUT_SHAPE_1p5mm = (96, 128, 128)   
 
 # Adjusting the dimensions to be divisible by 8 (2^3 where 3 are the downsampling layers of the AE)
-INPUT_SHAPE_AE = (96, 128, 128)   
+INPUT_SHAPE_AE = (192, 128, 128)   
 
 # Latent shape of the autoencoder 
-LATENT_SHAPE_AE = (3, 48, 32, 32)   
+LATENT_SHAPE_AE = (3, 24, 16, 16)   
 
 # Adjusting the latent space (with constant padding) to be divisible by 4 (2^2 where 2 are the downsampling layers of U-Net)
-LATENT_SHAPE_DM = (3, 48, 32, 32)
+LATENT_SHAPE_DM = (3, 24, 16, 16)
 
 # Affine matrix for MNI space resampled to 1.5mm^3
 MNI152_1P5MM_AFFINE = np.array([         
@@ -104,3 +104,5 @@ MNI152_1P5MM_AFFINE = np.array([
 AGE_MIN, AGE_MAX, AGE_DELTA = 0, 100, 100
 SEX_MIN, SEX_MAX, SEX_DELTA = 1, 2, 1
 DIA_MIN, DIA_MAX, DIA_DELTA = 1, 3, 2
+LESION_SIZE_MIN, LESION_SIZE_MAX, LESION_SIZE_DELTA = 0.0, 15.0, 15.0
+LESION_COUNT_MIN, LESION_COUNT_MAX, LESION_COUNT_DELTA = 0, 20, 20

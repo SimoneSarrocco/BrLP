@@ -6,13 +6,15 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 from monai import transforms
-from monai.utils import set_determinism
+from monai.utils.misc import set_determinism
 
 from torch.nn import L1Loss
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp.autocast_mode import autocast
+from torch.cuda.amp import GradScaler
 from generative.losses import PerceptualLoss, PatchAdversarialLoss
 from torch.utils.tensorboard import SummaryWriter
+from monai.metrics.regression import PSNRMetric, SSIMMetric, MSEMetric
 
 from src.brlp import const
 from src.brlp import utils
@@ -25,13 +27,6 @@ from src.brlp import (
 
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
-class DebugLoadImaged(transforms.LoadImaged):
-    def __call__(self, data):
-        print("Trying to load:", data['image_path'])
-        return super().__call__(data)
-
 
 if __name__ == '__main__':
 
@@ -51,12 +46,13 @@ if __name__ == '__main__':
 
 
     transforms_fn = transforms.Compose([
-        # DebugLoadImaged(keys=['image_path']),
         transforms.CopyItemsD(keys={'image_path'}, names=['image']),
         transforms.LoadImageD(image_only=True, keys=['image']),
         transforms.EnsureChannelFirstD(keys=['image']), 
+        transforms.ClipIntensityPercentilesD(keys=['image'], lower=1, upper=99, sharpness_factor=10.),
         # transforms.SpacingD(pixdim=const.RESOLUTION, keys=['image']),
-        # transforms.ResizeWithPadOrCropD(spatial_size=(96, 512, 512), mode='minimum', keys=['image']),
+        # transforms.ResizeWithPadOrCropD(spatial_size=(192, 512, 512), mode='constant', keys=['image']),
+        # transforms.SpatialPadD(spatial_size=[193, 512, 512], method='symmetric', mode='constant', keys=['image']),
         transforms.ResizeD(spatial_size=const.INPUT_SHAPE_AE, mode='trilinear', keys=['image']),
         transforms.ScaleIntensityD(minv=0, maxv=1, keys=['image']),
     ])
@@ -76,7 +72,7 @@ if __name__ == '__main__':
     #),
     # transforms.ResizeWithPadOrCrop(spatial_size=(128, 128, 128), mode='minimum'),
     # transforms.ScaleIntensity(minv=0, maxv=1),
-# ])
+    # ])
 
     dataset_df = pd.read_csv(args.dataset_csv)
     train_df = dataset_df[ dataset_df.split == 'train' ]
@@ -128,16 +124,21 @@ if __name__ == '__main__':
     writer = SummaryWriter()
     total_counter = 0
 
+    PSNR = PSNRMetric(max_val=1., reduction='mean')
+    # SSIM = StructuralSimilarityIndexMeasure().to(device)
+    SSIM = SSIMMetric(spatial_dims=3, data_range=1., reduction='mean')
+    MSE = MSEMetric(reduction='mean')
 
     for epoch in range(args.n_epochs):
         
         autoencoder.train()
         progress_bar = tqdm(enumerate(train_loader), total=len(train_loader))
         progress_bar.set_description(f'Epoch {epoch}')
+        mse_batches, psnr_batches, ssim_batches = 0, 0, 0
 
         for step, batch in progress_bar:
 
-            with autocast(enabled=True):
+            with autocast('cuda', enabled=True):
 
                 images = batch["image"].to(DEVICE)
                 # images = batch.to(DEVICE)
@@ -163,7 +164,7 @@ if __name__ == '__main__':
                 
             gradacc_g.step(loss_g, step)
 
-            with autocast(enabled=True):
+            with autocast('cuda', enabled=True):
 
                 # Here we compute the loss for the discriminator. Keep in mind that
                 # the loss used is an MSE between the output logits and the expected logits.
@@ -176,22 +177,34 @@ if __name__ == '__main__':
 
             gradacc_d.step(loss_d, step)
 
+            # Compute metrics between reconstruction and original image
+            mse_batch = MSE(reconstruction.float(), images.float())
+            # mse_batches += mse_batch.numpy()
+            psnr_batch = PSNR(reconstruction.float(), images.float())
+            # psnr_batches += psnr_batch.numpy()
+            ssim_batch = SSIM(reconstruction.float(), images.float())
+            # ssim_batches += ssim_batch.numpy()
+
             # Logging.
             avgloss.put('Generator/reconstruction_loss',    rec_loss.item())
             avgloss.put('Generator/perceptual_loss',        per_loss.item())
             avgloss.put('Generator/adverarial_loss',        gen_loss.item())
             avgloss.put('Generator/kl_regularization',      kld_loss.item())
             avgloss.put('Discriminator/adverarial_loss',    loss_d.item())
+            avgloss.put('Training_metrics/MSE',             mse_batch.item())
+            avgloss.put('Training_metrics/PSNR',            psnr_batch.item())
+            avgloss.put('Training_metrics/SSIM',            ssim_batch.item())
 
             
-            if total_counter % 108 == 0:
-                step = total_counter // 108
-                avgloss.to_tensorboard(writer, step)
-                utils.tb_display_reconstruction(writer, step, images[0].detach().cpu(), reconstruction[0].detach().cpu())
+            if total_counter % len(train_loader) == 0:
+                step = total_counter // len(train_loader)
+                utils.tb_display_reconstruction(writer, step, images[0].detach().cpu(), reconstruction[0].detach().cpu())  
         
             total_counter += 1
 
-        # Save the model each 10 epoch.
+        avgloss.to_tensorboard(writer, epoch+1)
+
+        # Save the model each 100 epoch.
         if (epoch+1) % 100 == 0 or epoch == args.n_epochs - 1:
             torch.save(discriminator.state_dict(), os.path.join(args.output_dir, f'discriminator-ep-{epoch}.pth'))
             torch.save(autoencoder.state_dict(),   os.path.join(args.output_dir, f'autoencoder-ep-{epoch}.pth'))

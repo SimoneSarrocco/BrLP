@@ -32,6 +32,19 @@ for col in visit_date_cols.values():
 # Convert Gender to binary: male → 0, female → 1
 df['Gender'] = df['Gender'].map({'male': 0, 'female': 1})
 
+# Normalize lesion size by min-max values across the 4 visits of each patient individually
+row_min = df[['t1', 't2', 't3', 't4']].min(axis=1)
+row_max = df[['t1', 't2', 't3', 't4']].max(axis=1)
+
+df[['t1', 't2', 't3', 't4']] = (df[['t1', 't2', 't3', 't4']].subtract(row_min, axis=0)).div(row_max-row_min, axis=0)
+
+# Normalize lesion count by min-max values across the 4 visits of each patient individually
+row_min = df[['t1n', 't2n', 't3n', 't4n']].min(axis=1)
+row_max = df[['t1n', 't2n', 't3n', 't4n']].max(axis=1)
+
+df[['t1n', 't2n', 't3n', 't4n']] = (df[['t1n', 't2n', 't3n', 't4n']].subtract(row_min, axis=0)).div(row_max-row_min, axis=0)
+
+
 # Mapping visit suffixes to visit folder names
 visit_map = {
     't1': 'V01',

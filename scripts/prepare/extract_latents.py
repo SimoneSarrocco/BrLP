@@ -22,13 +22,15 @@ if __name__ == '__main__':
     autoencoder = init_autoencoder(args.aekl_ckpt).to(DEVICE).eval()
 
     transforms_fn = transforms.Compose([
+        # DebugLoadImaged(keys=['image_path']),
         transforms.CopyItemsD(keys={'image_path'}, names=['image']),
         transforms.LoadImageD(image_only=True, keys=['image']),
         transforms.EnsureChannelFirstD(keys=['image']), 
+        transforms.ClipIntensityPercentilesD(keys=['image'], lower=1, upper=99, sharpness_factor=10.),
         # transforms.SpacingD(pixdim=const.RESOLUTION, keys=['image']),
-        # transforms.ResizeWithPadOrCropD(spatial_size=const.INPUT_SHAPE_AE, mode='minimum', keys=['image']),
+        # transforms.ResizeWithPadOrCropD(spatial_size=(192, 512, 512), mode='constant', keys=['image']),
         transforms.ResizeD(spatial_size=const.INPUT_SHAPE_AE, mode='trilinear', keys=['image']),
-        transforms.ScaleIntensityD(minv=0, maxv=1, keys=['image'])
+        transforms.ScaleIntensityD(minv=0, maxv=1, keys=['image']),
     ])
     
     df = pd.read_csv(args.dataset_csv)

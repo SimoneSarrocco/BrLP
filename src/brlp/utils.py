@@ -92,7 +92,8 @@ def to_mni_space_1p5mm_trick(x: torch.Tensor, mni1p5_dim: tuple = (96, 128, 128)
     Returns:
         torch.Tensor: input resized to original shape
     """
-    resizer = transforms.ResizeWithPadOrCrop(spatial_size=mni1p5_dim, mode='minimum')
+    # resizer = transforms.ResizeWithPadOrCrop(spatial_size=mni1p5_dim, mode='minimum')
+    resizer = transforms.Resize(spatial_size=mni1p5_dim, mode='trilinear')
     return resizer(x)
 
 
