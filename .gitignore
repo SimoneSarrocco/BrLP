@@ -1,6 +1,9 @@
 # project ignore
 runs
 tmp
+training_outputs
+examples
+src/configs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -167,6 +170,7 @@ cython_debug/
 examples/dataset.csv
 examples/B.csv
 training_outputs/
+training_outputs/ae_output/second_conf
 runs/
 examples/
 src/configs/config.yaml
