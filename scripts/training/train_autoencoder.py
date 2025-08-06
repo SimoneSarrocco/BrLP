@@ -1,21 +1,27 @@
 import os
 import argparse
 import warnings
-
+from setproctitle import setproctitle
 import pandas as pd
 import torch
 from tqdm import tqdm
 from monai import transforms
 from monai.utils.misc import set_determinism
-
+import shutil
+import datetime
 from torch.nn import L1Loss
 from torch.utils.data import DataLoader
-from torch.amp.autocast_mode import autocast
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler, autocast
 from generative.losses import PerceptualLoss, PatchAdversarialLoss
 from torch.utils.tensorboard import SummaryWriter
 from monai.metrics.regression import PSNRMetric, SSIMMetric, MSEMetric
-
+from src.brlp.lakefsimaged import LoadLakeFSImaged
+from src.brlp.lakefsloader import LakeFSLoader
+from src.brlp.datalist import DataList
+import yaml
+import logging
+from src.brlp.training_functions import get_loader
+from pathlib import Path
 from src.brlp import const
 from src.brlp import utils
 from src.brlp import (
@@ -27,6 +33,7 @@ from src.brlp import (
 
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+scaler = GradScaler(DEVICE)
 
 if __name__ == '__main__':
 
@@ -42,12 +49,36 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size',     default=16,    type=int)
     parser.add_argument('--lr',             default=1e-4,  type=float)
     parser.add_argument('--aug_p',          default=0.8,   type=float)
+    parser.add_argument('-C', '--config', default="configs/config.yaml", help="Sets the config file to be used.")
+    parser.add_argument('--lakefs', default="configs/lakefs_cfg.yaml", help="Sets the lakefs config file to be used.")
     args = parser.parse_args()
 
+    # set process name
+    setproctitle("AE-BrLP")
+
+    src_path = Path(__file__).parent
+    project_path = src_path.parent
+
+    with open(src_path / args.config) as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    with open(src_path / args.lakefs) as f:
+        lakefs_config = yaml.load(f, Loader=yaml.FullLoader)
+    learn_cfg = config["learning"]
+    model_cfg = config["model"]
+
+    lakefs_loader = LakeFSLoader(
+        local_cache_path=lakefs_config["cache_path"],
+        repo_name=lakefs_config["data_repository"],
+        branch_id=lakefs_config["branch"],
+        ca_path=lakefs_config["ca_path"],
+        endpoint=lakefs_config["s3_endpoint"],
+        secret_key=lakefs_config["secret_key"],
+        access_key=lakefs_config["access_key"],
+    )
 
     transforms_fn = transforms.Compose([
-        transforms.CopyItemsD(keys={'image_path'}, names=['image']),
-        transforms.LoadImageD(image_only=True, keys=['image']),
+        # transforms.CopyItemsD(keys={'image_path'}, names=['image']),
+        LoadLakeFSImaged(lakefs_loader=lakefs_loader, image_only=True, keys=['image']),
         transforms.EnsureChannelFirstD(keys=['image']), 
         transforms.ClipIntensityPercentilesD(keys=['image'], lower=1, upper=99, sharpness_factor=10.),
         # transforms.SpacingD(pixdim=const.RESOLUTION, keys=['image']),
@@ -74,17 +105,63 @@ if __name__ == '__main__':
     # transforms.ScaleIntensity(minv=0, maxv=1),
     # ])
 
-    dataset_df = pd.read_csv(args.dataset_csv)
-    train_df = dataset_df[ dataset_df.split == 'train' ]
-    # train_df = train_df[~train_df['image_path'].str.contains("OMEGA04/L/V02")]
-    trainset = get_dataset_from_pd(train_df, transforms_fn, args.cache_dir)
+    torch.multiprocessing.set_sharing_strategy('file_system') # against memory leak when using more than one worker, see https://github.com/pytorch/pytorch/issues/973
 
-    train_loader = DataLoader(dataset=trainset, 
-                              num_workers=args.num_workers, 
-                              batch_size=args.max_batch_size, 
-                              shuffle=True, 
-                              persistent_workers=True, 
-                              pin_memory=True)
+    # dataset_df = pd.read_csv(args.dataset_csv)
+    # train_df = dataset_df[ dataset_df.split == 'train' ]
+    # train_df = train_df[~train_df['image_path'].str.contains("OMEGA04/L/V02")]
+    # trainset = get_dataset_from_pd(train_df, transforms_fn, args.cache_dir)
+
+    # create the experiment folder, setup tensorboard, copy the used config
+    current_datetime = datetime.datetime.now()
+    timestamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
+    experiment_name = config['run_name']
+    use_cfg_fold = True
+    use_fold = config["data"]["fold"]
+    if not use_cfg_fold: experiment_name = experiment_name + f"_fold{use_fold}"
+    experiment_path = project_path / 'experiments' / (experiment_name + f"_{timestamp}")
+    writer = SummaryWriter(experiment_path)
+    shutil.copyfile(src_path / args.config, experiment_path / "config.yaml")
+    shutil.copyfile(src_path / args.lakefs, experiment_path / "lakefs_cfg.yaml")
+
+    # create a datalist from the filepath
+    input_path = Path(config["input_path"])
+    if input_path.is_file() and '.json' in input_path.name.lower():
+        datalist  = DataList.from_json(filepath=input_path, lakefs_config=lakefs_config)
+    else:
+        datalist = DataList.from_lakefs(data_config=config["data"], lakefs_config=lakefs_config, filepath=input_path, include_root=True)
+    data_list = datalist.data
+
+    # save datalist
+    datalist.save_datalist_to_json(path=experiment_path / "datalist.json")
+     # Configure the logging system
+    log_handlers = [logging.StreamHandler()]
+    if args.log:
+        log_handlers.append(logging.FileHandler(experiment_path / "debug.log"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s]: %(message)s",
+        handlers=log_handlers,
+    )
+
+    print(f"training dataset_size is {len(data_list['training'])}")
+
+    train_loader, val_loader = get_loader(
+        batch_size=learn_cfg["batch_size"],
+        data_list=data_list,
+        fold=use_fold,
+        num_workers=config["data"]["num_workers"],
+        train_transform=transforms_fn,
+        val_transform=transforms_fn,
+    )
+
+    # train_loader = DataLoader(dataset=trainset, 
+    #                          num_workers=config["data"]["num_workers"], 
+    #                          batch_size=learn_cfg["batch_size"], 
+    #                          shuffle=True, 
+    #                          persistent_workers=True, 
+    #                          pin_memory=True)
+
 
     autoencoder   = init_autoencoder(args.aekl_ckpt).to(DEVICE)
     discriminator = init_patch_discriminator(args.disc_ckpt).to(DEVICE)
@@ -112,16 +189,16 @@ if __name__ == '__main__':
                                      expect_batch_size=args.batch_size,
                                      loader_len=len(train_loader),
                                      optimizer=optimizer_g, 
-                                     grad_scaler=GradScaler())
+                                     grad_scaler=scaler)
 
     gradacc_d = GradientAccumulation(actual_batch_size=args.max_batch_size,
                                      expect_batch_size=args.batch_size,
                                      loader_len=len(train_loader),
                                      optimizer=optimizer_d, 
-                                     grad_scaler=GradScaler())
+                                     grad_scaler=scaler)
 
     avgloss = utils.AverageLoss()
-    writer = SummaryWriter()
+    # writer = SummaryWriter()
     total_counter = 0
 
     PSNR = PSNRMetric(max_val=1., reduction='mean')
@@ -177,34 +254,41 @@ if __name__ == '__main__':
 
             gradacc_d.step(loss_d, step)
 
-            # Compute metrics between reconstruction and original image
-            mse_batch = MSE(reconstruction.float(), images.float())
-            # mse_batches += mse_batch.numpy()
-            psnr_batch = PSNR(reconstruction.float(), images.float())
-            # psnr_batches += psnr_batch.numpy()
-            ssim_batch = SSIM(reconstruction.float(), images.float())
-            # ssim_batches += ssim_batch.numpy()
-
             # Logging.
             avgloss.put('Generator/reconstruction_loss',    rec_loss.item())
             avgloss.put('Generator/perceptual_loss',        per_loss.item())
             avgloss.put('Generator/adverarial_loss',        gen_loss.item())
             avgloss.put('Generator/kl_regularization',      kld_loss.item())
             avgloss.put('Discriminator/adverarial_loss',    loss_d.item())
-            avgloss.put('Training_metrics/MSE',             mse_batch.item())
-            avgloss.put('Training_metrics/PSNR',            psnr_batch.item())
-            avgloss.put('Training_metrics/SSIM',            ssim_batch.item())
-
             
             if total_counter % len(train_loader) == 0:
                 step = total_counter // len(train_loader)
                 utils.tb_display_reconstruction(writer, step, images[0].detach().cpu(), reconstruction[0].detach().cpu())  
-        
+
             total_counter += 1
+            avgloss.to_tensorboard(writer, epoch+1)
+        
+        # Validation phase
+        autoencoder.eval()
+        progress_bar_eval = tqdm(enumerate(val_loader), total=len(val_loader))
+        progress_bar_eval.set_description(f'Validation Epoch {epoch}')
+        for step, batch in progress_bar_eval:
+            with torch.no_grad():
+                images = batch["image"].to(DEVICE)
+                reconstruction, _, _ = autoencoder(images)
+                # Compute metrics between reconstruction and original image
+                mse_batch = MSE(reconstruction.float(), images.float())
+                # mse_batches += mse_batch.numpy()
+                psnr_batch = PSNR(reconstruction.float(), images.float())
+                # psnr_batches += psnr_batch.numpy()
+                ssim_batch = SSIM(reconstruction.float(), images.float())
+                # ssim_batches += ssim_batch.numpy()
+                avgloss.put('Validation_metrics/MSE',             mse_batch.item())
+                avgloss.put('Validation_metrics/PSNR',            psnr_batch.item())
+                avgloss.put('Validation_metrics/SSIM',            ssim_batch.item())
+                avgloss.to_tensorboard(writer, epoch+1)
 
-        avgloss.to_tensorboard(writer, epoch+1)
-
-        # Save the model each 100 epoch.
-        if (epoch+1) % 100 == 0 or epoch == args.n_epochs - 1:
+        # Save the model each 50 epoch.
+        if (epoch+1) % 50 == 0 or epoch == args.n_epochs - 1:
             torch.save(discriminator.state_dict(), os.path.join(args.output_dir, f'discriminator-ep-{epoch}.pth'))
             torch.save(autoencoder.state_dict(),   os.path.join(args.output_dir, f'autoencoder-ep-{epoch}.pth'))
